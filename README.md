@@ -1,6 +1,6 @@
 # Missing Bats: A Logistic Regression Analysis of Modern MLB Fastballs
 
-Link to paper: 
+[**Read the Full Research Paper Here**](Missing_Bats_Logistic_Regression.pdf) 
 
 ## Overview:
 This repository contains a statistical analysis identifying the physical and contextual characteristics that make Major League Baseball fastballs difficult to hit. By analyzing MLB Statcast data, the project models swing-and-miss (whiff) probabilities to quantify pitcher deception and mathematically isolate the "Dead Zone".
