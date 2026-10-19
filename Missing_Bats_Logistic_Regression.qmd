@@ -1,0 +1,763 @@
+---
+title: "Missing Bats: A Logistic Regression Analysis of Modern MLB Fastballs"
+author: Jack Sadowski and Nick Kreatsoulas
+date: 5/4/2026
+date-format: long
+format: pdf
+execute:
+  eval: false
+  warning: false
+  echo: false
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r}
+#| eval: true
+
+library(tidyverse)
+library(ggplot2)
+library(marginaleffects)
+library(modelsummary)
+library(gtsummary)
+library(gt)
+
+#Data
+swingdata<-read.csv("finaldata.csv")
+#Our primary Focus
+fastball<-swingdata %>% filter(pitch_type %in% c(
+  "FF", "SI", "FC"
+  ))
+#For Figure 1, makes it so left part of zone is always inside and right is always outside 
+fastball <- fastball %>%
+  mutate(plate_x_in_out = ifelse(stand == "L", plate_x * -1, plate_x))
+#Due to time purposes we decided to focus on Fastballs but could revisit and look at other pitches
+offspeed<-swingdata %>% filter(pitch_type %in% c(
+  "CH", "FS", "FO", "SC"
+  ))
+breakingball<- swingdata %>% filter(pitch_type %in% c(
+  "SL", "ST", "CU", "SV", "KC"
+  ))
+```
+
+# Abstract:
+
+Introduction: Generating swings and misses (whiffs) is critical to
+pitcher success. Whiff rates are significant indicators of the quality
+of a pitchers stuff and the best pitchers in the league tend to have
+high whiff rates. As the most frequently thrown pitch type, throwing a
+high-whiff fastball is critical to a pitchers arsenal. This study
+investigates which fastball characteristics, physical and contextual,
+lead to swing and misses.
+
+Methods: Using MLB Statcast data from the first week of the 2026 MLB
+season, we isolated a dataset of swung at fastballs. Predictors included
+velocity, movement, non-spin induced movement (spin deviation),
+location, and count.
+
+Key Results: The model reveals non-linear relationships between whiff
+probability and both velocity and movement. Pitch location heavily
+dictates outcomes with pitches in the upper part of the zone and out of
+the zone being associated with a higher whiff probability. Deeper counts
+(2-0, 2-2, 3-1, 3-2) significantly decrease whiff rates compared to
+early counts. Additionally, spin deviation and platoon matchups
+(same-handed LL or RR) were also shown to be significant positive
+predictors of swing and miss.
+
+Conclusions: The non-linearity of the relationships between velocity and
+movement and whiff probability emphasize the existence of “the dead
+zone”, the point where a pitcher’s pitch becomes significantly less
+effective due to being too similar to other pitchers. To maximize
+success a pitcher should avoid these “dead zones” in velocity and
+movement and deploy their pitch in elevated locations while leveraging
+same-handed matchups and favorable counts.
+
+```{r}
+#| eval: true 
+#Strike Zone Whiff Rate Heatmap (Made with Help from)
+#Creates a plot with horizontal locationas x axis, vertical location as y-axis, and is_whiff as z axis  
+p1<-ggplot(fastball, aes(x = plate_x_in_out, y = plate_z, z = is_whiff))+
+#Seperates the plot into 20 boxes, finds the mean is_whiff (phat) for each box and  
+stat_summary_2d(fun = mean, bins = 20, color = "white") +
+#Fills the boxes with a color representing the whiff rate in that box, blue is lower than the swing in miss rate in our dataset of 0.186, white is at 0.186, and red is higher than 0.186
+scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0.186, 
+name = "Whiff Prob") +
+#Draws Strike Zone
+annotate("rect", xmin = -0.83, xmax = 0.83, ymin = 1.5, ymax = 3.5, alpha = 0, color = "black", linewidth = 1) +
+#Makes the zone not squished
+coord_fixed() +
+#Adds title
+labs(title = "Whiff Probability by Plate Location",
+       subtitle = "Left=Inside | Right=Outside",
+       x = "Horizontal Location (ft)",
+       y = "Vertical Location (ft)") +
+theme_minimal()
+```
+
+```{r}
+#| eval: true
+#Whiff Rate by Count
+p2<-fastball %>%
+  # Group by the count
+  group_by(count) %>%
+  #Calculate the whiff rate
+  dplyr::summarize(whiff_rate = mean(is_whiff)) %>%
+  #Plot the count and whiff rate
+  ggplot(aes(x = count, y = whiff_rate)) +
+  #Fill bars and give them borders
+  geom_col(fill = "steelblue", color = "black") +
+  #Add the exact percentage above each bar
+  geom_text(aes(label = scales::percent(whiff_rate, accuracy = 1)), 
+  vjust = -0.5, size = 4) +
+  labs(title = "Whiff Rate by Pitch Count",
+       subtitle = "Hitters miss less in certain hitter-friendly counts",
+       x = "Pitch Count",
+       y = "Whiff Rate") +
+  theme_minimal()
+```
+
+```{r}
+#| eval: true
+#Whiff Rate by Platoon
+p3<-fastball %>%
+  #Convert the 1s and 0s into the texts strings
+  mutate(matchup_type = ifelse(same_hand == 1, "Same Hand (R vs R / L vs L)", "Opposite Hand (R vs L / L vs R)")) %>%
+  #Group by the new text column instead of the 1/0 column
+  group_by(matchup_type) %>%
+  # Calculate the whiff rate
+  dplyr::summarize(whiff_rate = mean(is_whiff, na.rm = TRUE)) %>%
+  # 3. Use the text column for x and fill, and add the missing '+' at the end
+  ggplot(aes(x = matchup_type, y = whiff_rate, fill = matchup_type)) +
+  geom_col(color = "black", width = 0.6, show.legend = FALSE) +
+  # Add the percentage labels right on top of the bars
+  geom_text(aes(label = scales::percent(whiff_rate, accuracy = 0.1)), 
+            vjust = -0.5, size = 5, fontface = "bold") +
+  #Fill with color
+  scale_fill_manual(values = c("Same Hand (R vs R / L vs L)" = "firebrick", 
+                               "Opposite Hand (R vs L / L vs R)" = "steelblue")) +
+  #Formats Labels above bars
+  scale_y_continuous(labels = scales::percent, expand = expansion(mult = c(0, 0.15))) +
+  #Add title
+  labs(title = "Whiff Rate: Platoon Advantage",
+       subtitle = "Comparing same-handed vs. opposite-handed matchups",
+       x = "Platoon Matchup",
+       y = "Whiff Rate") +
+  theme_minimal()
+```
+
+```{r}
+#| eval: true
+#| label: fig-1
+#| fig-cap-location: top
+#| fig-cap: "**Exploratory Plots for Categorical Variables**"
+#| fig-width: 12
+#| fig-height: 6
+
+library(patchwork)
+#Displays the three plots
+p2/(p1+p3)
+```
+
+```{r}
+#| eval: true
+#Fastball Empirical Logit Plots (code adapted from class slideshow)
+
+#Velocity
+velo.quants <- quantile(fastball$effective_speed, probs=seq(0,1,0.10))
+logit.velo <- fastball %>%
+  mutate(veloCat = cut(effective_speed, breaks = velo.quants, include.lowest=T)) %>%
+  group_by(veloCat) %>%
+  reframe(phat = mean(is_whiff), veloCat = veloCat) %>% distinct() %>%
+  mutate(logodds = log(phat / (1-phat)))
+p1<-logit.velo %>% ggplot(aes(x = veloCat, y = logodds)) + 
+  geom_point() +
+  theme_bw() + 
+  labs(title="Log Odds of Swing and Miss vs. Velocity",
+       y = "Log Odds of Swng and Miss", 
+       x = "Velocity decile") + 
+  theme(title=element_text(size=8))
+
+#Horizontal Break
+hz.quants <- quantile(fastball$pfx_x, probs=seq(0,1,0.10))
+logit.hz <- fastball %>%
+  mutate(hzCat = cut(pfx_x, breaks = hz.quants, include.lowest=T)) %>%
+  group_by(hzCat) %>%
+  reframe(phat = mean(is_whiff), hzCat = hzCat) %>% distinct() %>%
+  mutate(logodds = log(phat / (1-phat)))
+p2<-logit.hz %>% ggplot(aes(x = hzCat, y = logodds)) + 
+  geom_point() +
+  theme_bw() + 
+  labs(title="Log Odds of Swing and Miss vs. Horizontal Break",
+       y = "Log Odds of Swng and Miss", 
+       x = "Horizontal Break decile") + 
+  theme(title=element_text(size=8))
+
+#Vertical Break
+vb.quants <- quantile(fastball$pfx_z, probs=seq(0,1,0.10))
+logit.vb <- fastball %>%
+  mutate(vbCat = cut(pfx_z, breaks = vb.quants, include.lowest=T)) %>%
+  group_by(vbCat) %>%
+  reframe(phat = mean(is_whiff), vbCat = vbCat) %>% distinct() %>%
+  mutate(logodds = log(phat / (1-phat)))
+p3<-logit.vb %>% ggplot(aes(x = vbCat, y = logodds)) + 
+  geom_point() +
+  theme_bw() + 
+  labs(title="Log Odds of Swing and Miss vs. Vertical Break",
+       y = "Log Odds of Swng and Miss", 
+       x = "Vertical Break decile") + 
+  theme(title=element_text(size=8))
+
+#Arm Angle
+aa.quants <- quantile(fastball$arm_angle, probs=seq(0,1,0.10), na.rm = TRUE)
+logit.aa <- fastball %>%
+  mutate(aaCat = cut(arm_angle, breaks = aa.quants, include.lowest=T)) %>%
+  group_by(aaCat) %>%
+  reframe(phat = mean(is_whiff), aaCat = aaCat) %>% distinct() %>%
+  mutate(logodds = log(phat / (1-phat)))
+p4<-logit.aa %>% ggplot(aes(x = aaCat, y = logodds)) + 
+  geom_point() +
+  theme_bw() + 
+  labs(title="Log Odds of Swing and Miss vs. Arm Angle",
+       y = "Log Odds of Swng and Miss", 
+       x = "Arm Angle Decile") + 
+  theme(title=element_text(size=8))
+
+#Spin Deviation
+sd.quants <- quantile(fastball$spin_deviation, probs=seq(0,1,0.10))
+logit.sd <- fastball %>%
+  mutate(sdCat = cut(spin_deviation, breaks = sd.quants, include.lowest=T)) %>%
+  group_by(sdCat) %>%
+  reframe(phat = mean(is_whiff), sdCat = sdCat) %>% distinct() %>%
+  mutate(logodds = log(phat / (1-phat)))
+p5<-logit.sd %>% ggplot(aes(x = sdCat, y = logodds)) + 
+  geom_point() +
+  theme_bw() + 
+  labs(title="Log Odds of Swing and Miss vs. Spin Deviation",
+       y = "Log Odds of Swng and Miss", 
+       x = "Spin Deviation decile") + 
+  theme(title=element_text(size=8))
+```
+
+# Introduction:
+
+The ability to induce swing and miss is one of the most valued abilities
+in professional baseball for pitchers. Strikeouts have become a huge
+part of baseball in the 21st century, and whiffs directly lead to
+strikeouts. Since 2008, strikeout rates have risen every season,
+reaching historical records in the last couple of years (Baseball
+Reference, 2024). As a result, MLB front offices and pitching coaches
+have spent a lot of time understanding what makes a pitch difficult to
+hit. With the introduction of Statcast technology in 2015, every pitch’s
+characteristics are captured by cameras with ultimate precision. Prior
+work shows that pitch velocity, location, and movement independently
+predict swing and miss outcomes (Martin, 2019 and Greve and Savitz,
+2023). Recently, researchers have explored seam-shifted wake, which is
+when a pitch's seams are oriented asymmetrically relative to its
+trajectory (Smith, 2020). This causes the ball to deviate from its
+expected ball flight, reducing the batter's ability to hit the pitch.
+Spin deviation is the angular difference between a pitch's observed spin
+axis and the axis expected from its movement. Our study uses pitch
+Statcast data from the first week of the 2026 MLB Season to model the
+probability of a swing and miss on fastball-type pitches in order to
+answer the question: What makes a fastball hard to hit?
+
+```{r}
+#| eval: true
+#| label: fig-2
+#| fig-cap-location: top
+#| fig-cap: "**Empirical logit Plots for Velocity and Veritcal Break**"
+#| fig-width: 10
+#| fig-height: 8
+
+#Shows the two plots
+p1/p3
+```
+
+# Methods:
+
+**Data:**
+
+Our dataset was all swung at fastballs from the first week of the 2026
+MLB season (3/25 to 4/1). This data came from Baseball Savant’s
+downloadable Statcast data using high-speed cameras installed in all 30
+MLB ballparks. The dataset contained 6448 observations of what Baseball
+Savant considers a fastball (a fourseam, twoseam/sinker, and cutter). Of
+the 118 variables in the full dataset we focused on effective speed (in
+miles per hour) to quantify velocity, pfx_x and pfx_z (in feet) to
+quantify movement, spin deviation (in degrees) to quantify Seam Shifted
+Wake, zone to quantify location, balls and strikes for the count, arm
+angle in degrees to quantify the pitchers release, and a binary
+predictor indicating whether it was a platoon matchup (where the batter
+and pitch throw and hit with the same hand). These variables were chosen
+due to their roles in traditional baseball wisdom or in the case of Seam
+Shifted Wake, prevalence in recent research. Several plots were made to
+visualize relationships between these variables and swing and miss
+rates. For each continuous variable we looked at empirical logit plots
+to determine the shape and significance of their relationship with the
+probability of a swing and miss. Several of these plots
+(effective_speed, pfx_x, and pfx_z) showed U-shaped distributions
+(Figure 2). To compensate for this and fulfill the linearity assumption
+we used polynomial terms for these predictors in all models.
+Additionally we made plots to visualize each of the categorical
+variables relationships. Figure 1 shows a heatmap of whiff rates based
+on location. Pitches at the top of the strikezone or outside it seem to
+have higher whiff rates. We also made boxplots showing the whiff rates
+for each possible count, and same handed matchups (Figure 1). These both
+demonstrated a difference in whiff rates.
+
+**Models:**
+
+We fit several logistic regression models predicting is_whiff (a binary
+predictor that is 1 for a swing and miss and 0 otherwise). First we fit
+individual models for each variable we looked at. Using these models and
+our exploratory plots we then fit a final model with the best
+predictors. Our final predictors were effective speed, pfx_x, pfx_z,
+spin deviation, zone, count, and a binary predictor indicating whether
+it was a same hand matchup. Arm angle was the only variable we we
+decided not to include in the final model. Its coefficient in its
+individual model was extremely low and had a high p-value, which is also
+seen in the flatness of its empirical logit plot.
+
+```{r}
+#| eval: true
+#| echo: false
+#Final model
+fastballmodel<-glm(is_whiff ~ poly(effective_speed,2)+poly(pfx_x,2)+poly(pfx_z,2)+spin_deviation+ +factor(zone)+factor(count)+same_hand, data = fastball, family = binomial)
+
+#Individual Predictor Models
+effectivespeed<-glm(is_whiff ~ poly(effective_speed,2), data = fastball, family = binomial)
+pfx_x<-glm(is_whiff ~ poly(pfx_x,2), data = fastball, family = binomial)
+pfx_z<-glm(is_whiff ~ poly(pfx_z,2), data = fastball, family = binomial)
+spindeviation<-glm(is_whiff ~ spin_deviation, data = fastball, family = binomial)
+zone<-glm(is_whiff ~ factor(zone), data = fastball, family = binomial)
+count<-glm(is_whiff ~ factor(count), data = fastball, family = binomial)
+samehand<-glm(is_whiff ~ same_hand, data = fastball, family = binomial)
+armangle<-glm(is_whiff ~ arm_angle, data = fastball, family = binomial)
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: tbl-results
+#| tbl-cap: "**Unadjusted vs Adjusted Models for Fastball Whiff Probability**"
+#Format the final adjusted model
+tbl_final <- tbl_regression(fastballmodel, conf.int = FALSE)
+#List each individual model
+ind_models <- list(
+  effectivespeed, 
+  pfx_x, 
+  pfx_z, 
+  spindeviation, 
+  zone, 
+  count, 
+  samehand, 
+  armangle
+)
+
+# Format each model in the list, then stack them vertically
+tbl_ind_stacked <- tbl_stack(
+  lapply(ind_models, function(mod) tbl_regression(mod, conf.int = FALSE))
+)
+
+# Merge the stacked individual table side-by-side with the final table
+tbl_merged <- tbl_merge(
+  tbls = list(tbl_ind_stacked, tbl_final),
+  tab_spanner = c("**Unadjusted (Individual)**", "**Adjusted (Final Model)**")
+)
+#Dispplay the table with title
+tbl_merged %>%
+  modify_caption("**Table 1: Unadjusted vs Adjusted Models for Fastball Whiffs**")
+```
+
+# Results:
+
+For the outcome variable of interest, is_whiff, 18.6% of swings resulted
+in a whiff, while the remaining 81.4% resulted in contact. Continuous
+predictor variables included effective speed (Mean = 94.04, SD = 3.22),
+horizontal break (pfx_x; Mean = 0.01, SD = 0.91), vertical break (pfx_z;
+Mean = 1.06, SD = 0.46), and spin deviation (Mean = 14.25, SD = 10.28).
+Categorical predictors included pitch location standardized into 13
+spatial zones, count, and platoon advantage.
+
+A binomial logistic regression was conducted to predict the probability
+of a whiff based on p the physical characteristics and context of the
+pitch. Overall, the model demonstrated acceptable predictive ability
+with a Concordance index (C-index) of 0.71. Several of our continuous
+variables, representing the pitches physical characteristics, showed
+non-linear relationships with swing and miss which were accounted for
+using 2nd degree polynomial coefficients. The first was effective_speed,
+the pitches velocity in miles and hour controlling for the pitcher's
+release point using basic kinematics. The first term of the coefficient
+was positive but not statistically significant (Estimate=3.39, 95% CI
+\[-2.66, 9.50\], p=0.27) showing that an increase in velocity isn’t
+always associated with a higher whiff probability. The second
+coefficient was positive and statistically significant (Estimate=8.56,
+95% CI \[3.01, 14.04\], p\<0.01), indicating that velocity has a
+U-shaped relationship with swing and misses where both higher and lower
+velocities increase swing and miss probability. Horizontal and vertical
+movement were also fit using second degree polynomial coefficients. The
+first term for horizontal break (pfx_x) was large, positive, and
+statistically significant (Estimate=19.93, 95% CI \[10.08, 29.81\],
+p\<0.01). Because horizontal break was standardized so negative break is
+towards the batter and positive break is away form the batter this means
+that fastballs breaking away from the batter were more effective. The
+second term was negative and statistically significant (Estimate=-7.05,
+95% CI \[-13.78, -0.35\], p=0.04) indicating that this break has
+diminishing returns. For induced vertical break (pfx_z) the first
+coefficient was positive and statistically significant (Estimate=9.41,
+95% CI \[1.50, 17.40\], p=0.02) and the second coefficient was also
+positive and statistically significant (Estimate=6.72, 95% CI \[1.37,
+11.99\], p=0.01). This relationship also follows a U-shape. Fastballs
+that “defied gravity” with high induced vertical break were very
+effective but so were fastballs with sink and low vertical break. The
+other physical characteristic was spin deviation measuring Seam Shifted
+Wake. Seam shifted wake was shown to be a positive predictor of swing
+and miss (Estimate=0.01, 95% CI \[0.00, 0.02\], p\<0.01).
+
+Contextual characteristics in our model were also shown to be
+significant. Regarding spatial location, all four shadow zones outside
+the strike zone were shown to have high statistically significant
+coefficients compared to Zone 1. These zones were Zone 11
+(Estimate=0.89, 95% CI \[0.59, 1.20\] , p\<0.01), Zone 12
+(Estimate=1.33, 95% CI \[1.02, 1.65\], p\<0.01), Zone 13 (Estimate=1.68,
+95% CI \[1.33, 2.04\], p\<0.01), and Zone 14 (Estimate=1.50, 95% CI
+\[1.11, 1.90\], p\<0.01). Other zones that were better than Zone 1 were
+Zone 2 (Estimate=0.47, 95% CI \[-0.17, 0.79\], p\<0.01) and Zone 3
+(Estimate=0.77, 95% CI \[0.45, 1.10\],p\<0.01). These zones represent up
+and away strikes. The worst zones were Zone 4 (Estimate=-0.83, p\<0.01)
+representing a middle in fastball and Zone 8 (Estimate=-0.50, 95% CI
+\[-1.27, -0.40\], p=0.04) representing low and middle fastball. As for
+counts, compared to a 0-0 count, deeper counts had negative
+statistically significant coefficients. These included, 2-2
+(Estimate=-0.37, 95% CI \[-0.63, -0.11\], p\<0.01), 3-1 (Estimate=-0.55,
+95% CI \[-1.01, -0.13\], p=0.01), and 3-2 (Estimate=-0.49, 95% CI
+\[-0.77, -0.21\], p\<0.01). Interestingly, the count associated with the
+highest probability of a whiff is 2-0 (Estimate=-0.59, 95% CI \[-1.04,
+-0.17\], p\<0.01). The other contextual variable we looked at was same
+handed matchups which significantly increased the probability of a whiff
+compared to an opposite hand matchup (Estimate=0.44, 95% CI \[0.22,
+0.67\], p\<0.01).
+
+```{r}
+#| eval: true
+#| label: tbl-predictions
+#| tbl-cap: "**Predicted Whiff Probabilities by Fastball Velocity**"
+
+#Generate the predictions using Marginal Effects library
+pred_df <- predictions(
+  fastballmodel, 
+  newdata = datagrid(effective_speed = c(88, 92, 94, 96, 98, 100, 102))
+)
+#Clean and format the table
+pred_df %>%
+  #Select wanted solumns
+  select(effective_speed, estimate, conf.low, conf.high) %>%
+  gt() %>%
+  #Make the the whiff rate a percent
+  fmt_percent(
+    columns = c(estimate, conf.low, conf.high),
+    decimals = 1
+  ) %>%
+  #Change the labels of the table
+  cols_label(
+    effective_speed = "Effective Speed (mph)",
+    estimate = "Predicted Whiff Rate",
+    conf.low = "Lower 95% CI",
+    conf.high = "Upper 95% CI"
+  ) %>%
+  #Center the table
+  cols_align(
+    align = "center",
+    columns = everything()
+  )
+
+```
+
+# Discussion:
+
+These findings align with traditional baseball wisdom. Velocity is a
+strong indicator of a fastballs success and faster fastballs tend to
+generate more swing and misses. In our model a blazing 102 mph fastball
+is associated with 27.2% whiff probability (Table 2), much higher than
+the observed whiff percentage in the dataset of 18.6%. An average 94 mph
+fastball on the other hand is associated with a 16.8% whiff probability
+(Table 2), below the datasets average. Additionally, it is seen that
+higher fastballs tend to perform better. Zones 1, 2, and 3 are
+associated with the highest whiff probabilities in the strike zone. As
+for movement profiles, high induced vertical break can cause hitters to
+swing under the pitch, and low vertical break can cause them to swing
+over the pitch. Platoon advantages, a well recorded phenomenon, are also
+present in our model.
+
+A more interesting finding is the relationship between whiff probability
+and horizontal movement. Not just any movement is good movement for
+generating swing and misses, movement away from the batter is superior.
+This may be because movement towards the batter is more likely to result
+in the batter getting jammed and producing weak contact instead of a
+whiff. Horizontal movement also has diminishing returns. This is likely
+due to the drop in velocity necessary to throw a pitch with more
+horizontal movement. Eventually the batter has enough time to react to
+at least make contact with a pitch with very high horizontal movement.
+The count predictor also yielded relatively surprising results. One
+would expect pitcher’s counts like 1-2 and 0-2 to have the highest whiff
+probability (Figure 1). However none of these early count pitches had
+statistically significant coefficients meaning their whiff probabilities
+aren’t really distinguishable from an 0-0 pitch. Additionally a 2-0
+pitch was actually associated with the lowest swing and miss probability
+not a 3-0 pitch since 3-0 is the best count for a hitter. This is likely
+due to the fact that batter usually won’t swing 3-0 meaning there wasn’t
+much 3-0 swing data.
+
+**The Dead Zone:**
+
+The non-linear relationships between whiff probability and both velocity
+and movement emphasize the existence of “the Dead Zone”. This is a well
+known quality of fastballs, especially about their induced vertical
+break, but extends to velocity as well. Fastballs with average induced
+vertical break interact with gravity just how the batter is expecting.
+They perfectly line up with many of the previous pitches the batter has
+seen making them very easy to hit. Whereas pitches with elite vertical
+break, either very high representing a “high ride” fastball, or very low
+representing a “sinking” fastball are very hard to hit and are
+associated with a higher whiff probability. The same is true for
+velocity. Fastballs that are around league average (94 mph) match the
+batter expectations and are easy to hit. Whereas outlier fastballs with
+much higher or lower velocities are more difficult. Especially
+considering to make it to the MLB with a lower velocity fastball
+requires a better movement profile and command, so that even if the
+batter adjusts it is still effective. Ultimately it’s all about avoiding
+the average.
+
+**Seam Shifted Wake:**
+
+Seam Shifted Wake is a relatively new pitch metric that was shown to
+have a very slight positive association with a pitch’s whiff
+probability. A 10 degree increase in spin deviation was associated with
+an 1.2% increase in swing and miss probability, holding other predictors
+constant. However within the dataset spin deviation had a very large
+standard deviation of 10.28. This is partially accounted for by the
+several different types of fastballs within the dataset. Sinkers tend to
+have high spin deviations than four seams and cutters. The high variance
+in spin deviations is also likely due to the data collection itself. In
+laboratory settings with much more precise imaging high spin deviations
+for fastballs are around 40 or 50 degrees. Yet several pitches in the
+dataset had deviations well above these values. This suggests that the
+spin deviations measured by Statcast may not always be completely
+accurate. As a result, spin deviation within this model cannot be fully
+trusted.
+
+**Real World Examples:**
+
+A beautiful thing about Statcast data is that it allows you to watch
+videos of each individual pitch in the dataset. Doing so with some of
+the best and worst pitches at generating a swing and miss reveals
+several archetypes for an effective fastball.
+
+**The Low Sinker:** The best pitch in the dataset was a [Tyler Roger’s
+Sinker to Jordan
+Beck](https://baseballsavant.mlb.com/sporty-videos?playId=efd773f5-8b57-3e0e-af1e-5bbed0dbc615).
+This pitch (effective_speed=80.6, pfx_x=0.01, pfx_z=-0.86,
+spin_deviation=30.3, zone=13, count=0-0, same_hand=1) was a low and in
+sinker with a predicted swing and miss probability of 78.1%. It actually
+resulted in a ground ball but to an avid baseball fan definitely passes
+the eye test as a nasty pitch due to Roger’s unconventional arm slot and
+its extremely negative vertical movement. This pitch can be classified
+as a low sinker, which within the data set is very successful. These
+pitches are thrown in Zones 13 or 14 and have negative vertical break.
+Another such low sinker that actually did generate a swing and miss was
+[Camilo Doval’s Sinker to Casey
+Scmidt](https://baseballsavant.mlb.com/sporty-videos?playId=280e8c39-720f-3ac6-a27e-63ea3e72580b)
+(effective_speed=98.4, pfx_x=-0.63, pfx_z=-0.03, spin_deviation=49.7,
+zone=14, count=0-2, same_hand=1) which had a predicted 52.1% whiff
+probability.
+
+**The High Ride Fourseam:** Another successful pitch within the dataset
+was a four seam fastball with high velocity, location, and induced
+vertical break. On of these such fastballs is [Tarik Skubal’s Fastball
+to Jake
+Cronenworth](https://baseballsavant.mlb.com/sporty-videos?playId=2bdb6983-7dde-3a0a-91b6-6df4721c77e1)
+(effective_speed=98, pfx_x=-0.15, pfx_z=1.46, spin_deviation=51.3,
+zone=12, count=1-2, same_hand=1) which had a predicted 57.9% whiff
+probability despite being put in play. This certainly matches the idea
+of a traditional “high heater”. Another one of these pitches is from the
+current best closer in baseball Mason Miller. His [Fastball to Jung Ho
+Lee](https://baseballsavant.mlb.com/sporty-videos?playId=dea623df-c5d0-3fab-824f-9dfe8d7fb0a2)
+(effective_speed=104.1, pfx_x=0.56, pfx_z=1.54, spin_deviation=1.98,
+zone=3, count=0-2, same_hand=0) had a predicted 43.2% whiff probability
+and was a swing and miss.
+
+**The Slutter:** The next successful pitch is a controversial one, a cut
+fastball with high horizontal movement. In many cases this pitch has low
+velocity and closely resembles a slider hence the term slutter. As a
+result many people do not consider it a fastball. One of these actually
+comes from Tyler Roger’s brother Taylor. His [Slutter to Brandon
+Nimmo](https://baseballsavant.mlb.com/sporty-videos?playId=19f16b39-802b-315d-9a62-f84596486ff0)
+(effective_speed=81.8, pfx_x=0.5, pfx_z=0.29, spin_deviation=9.8,
+zone=13, count=0-0, same_hand=1) had a predicted 65.5% whiff
+probability. Another slutter more reminiscent of a traditional cutter
+was [Kenley Jansen’s Slutter to Nick
+Castellanos](https://baseballsavant.mlb.com/sporty-videos?playId=7a631d87-7cf8-375e-a759-cfed8ae8f452)
+(effective_speed=93.4, pfx_x=0.67, pfx_z=1.57, spin_deviation=16.23,
+zone=14, count=1-2, same_hand=1) which had a predicted whiff probability
+of 55.8%.
+
+**The Worst Pitch:** The worst pitch in the dataset was [Jake Bird’s
+Sinker to Victor
+Robles](https://baseballsavant.mlb.com/sporty-videos?playId=e67a2d6c-9379-3fd3-9474-e593b6d75be2)
+(effective_speed=93.4, pfx_x=-1.63, pfx_z=0.56, spin_deviation=9.03,
+zone=4, count=2-0, same_hand=1) with a predicted whiff probability of
+just 2%. This pitch also passes the eye test as a meatball for all
+intents and purposes. It is a middle middle fastball, in a hitters
+count, and in the deadzone of induced vertical break and velocity.
+Unsurprisingly this ball was put into play. Another pitch with a very
+low predicted whiff probability was [Michael Lorenzen’s Cutter to Liam
+Hicks](https://baseballsavant.mlb.com/sporty-videos?playId=8d1b2992-6d05-3e12-a042-4c9b8941115a)
+(effective_speed=88.1, pfx_x=0.11, pfx_z=0.97, spin_deviation=33.5,
+zone=4, count=2-1, same_hand=0) with a predicted probability of 6%. This
+was another meatball. A middle in cutter at just 88.1 mph that was hit
+for a 2-run homerun.
+
+**Practical Implications:** These findings carry significant
+implications for player development and in-game strategy. Consistent
+with traditional baseball wisdom, throwing hard certainly does help with
+generating swing and misses. But velocity isn’t everything and tailoring
+a pitch’s profile to its utilization is equally as important. Paring
+high induced vertical break and velocity with use up in the zone is
+effective. So is a negative induced vertical break sinker or sweeping
+cutter low in the zone. Throughout all fastball types, however, avoiding
+the "Deadzone" is imperative.
+
+**Limitations:** The swing and miss is not the only way to generate outs
+or even strikes. Since this study was restricted to only swung at
+pitches it does not account for other positive pitch outcomes like
+called-strikes or soft contact. For example inside sinkers jamming the
+batter are very effective pitches, but don’t generate lots of swing and
+misses so are not rewarded by the model. The model also doesn’t consider
+sequencing and overall arsenals which is probably the most important
+factor in deceiving the batter and generating poor swings. A pitcher
+having other good pitches besides a fastball that the batter has to
+consider makes the fastball even more effective. Only having a fastball
+allows MLB level hitter to tee off. The final model also does not
+consider anything to do with the pitchers motion and release point which
+also certainly add to a pitch’s deception.
+
+# Conclusion:
+
+This study sought to answer the fundamental question: what
+characteristics of a fastball lead to a swing and miss? By analyzing the
+pitch’s physical characteristics and its context, the resulting model
+confirms that generating a swing and miss is not simply about throwing
+as hard as possible, but rather about deploying a unique pitch profile.
+
+The most significant takeaway from this research is the undeniable
+danger of the "Dead Zone." The nonlinear relationships seen between
+whiff probability, effective velocity, and induced vertical break show
+that average characteristics are severely punished by batters. To
+consistently generate whiffs, a fastball must possess outlier traits.
+This could be upper-percentile velocity, high induced vertical break
+(ride), sweeping horizontal break away from the barrel of a batter, or
+heavy sink. Context also heavily dictates the outcome. Even the most
+elite fastballs are vulnerable if thrown in the middle of the plate
+(Zone 4) during hitter friendly counts. Purposely attacking shadow zones
+around the edge of the strike zone and leveraging same handed platoon
+matchups significantly amplify a pitches success.
+
+Ultimately there is not single “perfect” fastball. Instead of striving
+for a universal standard, pitchers should focus on identifying and
+maximizing their own outlier metrics to avoid the “Dead Zone”. As the
+game of baseball continues to evolve through the lens of data and
+Statcast technology, pitchers are better equipped than ever to
+understand their unique strengths and execute pitch profiles that leave
+hitters swinging at empty air.
+
+## References:
+
+Baseball-Reference. (2024). Major League Baseball batting year-by-year
+averages. https://www.baseball-reference.com/leagues/majors/bat.shtml
+
+Greve, C., & Savitz, R. (2024). A linear regression model for predicting
+whiff percentage in Major League Baseball. Maths and Sports, 6(1).
+https://doi.org/10.5149/ms.1337
+
+Hofmeister, C. (2026, January 21). Reverse-engineering the perfect
+sinker. Medium.
+https://medium.com/@colinhofmeister/reverse-engineering-the-perfect-sinker-b5fbcbe06f2e
+
+Hook, C. (2022, May 3). The impact of seam-shifted wakes on pitch
+quality. Driveline Baseball.
+https://www.drivelinebaseball.com/2021/03/the-impact-of-seam-shifted-wakes-on-pitch-quality/
+
+Martin, E. (2019). Predicting Major League Baseball strikeout rates from
+differences in velocity and movement among player pitch types. MIT Sloan
+Sports Analytics Conference.
+https://www.sloansportsconference.com/research-papers/predicting-major-league-baseball-strikeout-rates-from-differences-in-velocity-and-movement-among-player-pitch-types
+
+Nathan, A. (2021, January 5). What is the Hawkeye Spin Data teaching
+us?. The Physics of Baseball.
+https://baseball.physics.illinois.edu/HawkeyeSpinAnalysis-Part%20I-rev1.pdf
+
+Smith, Andrew W., "Pitched Baseballs and the Seam Shifted Wake" (2020).
+All Graduate Theses and Dissertations. 7903.
+https://digitalcommons.usu.edu/etd/7903
+
+```{r}
+#Finds whiff rate in dataset
+whiff_in_dataset=mean(fastball$is_whiff)
+whiff_in_dataset
+
+#Best pitch in Dataset Tyler Rogers Sinker to Jordan Beck:
+#https://baseballsavant.mlb.com/sporty-videos?playId=efd773f5-8b57-3e0e-af1e-5bbed0dbc615
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=80.6, pfx_x=0.01, pfx_z=-0.86, spin_deviation=30.3, zone=13, count="0 - 0", same_hand=1), type = "resp")
+
+#Other Rogers Good Pitch: 
+#https://baseballsavant.mlb.com/sporty-videos?playId=d5259966-3467-3bb3-bdd7-5e48c1c22e64
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=81.2, pfx_x=-0.08, pfx_z=-0.96, spin_deviation=27.2, zone=12, count="0 - 2", same_hand=1), type = "resp")
+
+#Other Very Highly Rated Pitches:
+
+#Trevor Rogers Slutter to Brandon Nimmo
+#https://baseballsavant.mlb.com/sporty-videos?playId=19f16b39-802b-315d-9a62-f84596486ff0
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=81.8, pfx_x=0.5, pfx_z=0.29, spin_deviation=9.8, zone=13, count="0 - 0", same_hand=1), type = "resp")
+
+#Tarik Skubal Fastball to Jake Cronenworth
+#https://baseballsavant.mlb.com/sporty-videos?playId=2bdb6983-7dde-3a0a-91b6-6df4721c77e1
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=98, pfx_x=-0.15, pfx_z=1.46, spin_deviation=51.3, zone=12, count="1 - 2", same_hand=1), type = "resp")
+
+#Mason Miller Fastball to Jung Ho Lee
+#http://baseballsavant.mlb.com/sporty-videos?playId=dea623df-c5d0-3fab-824f-9dfe8d7fb0a2
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=104.1, pfx_x=0.56, pfx_z=1.54, spin_deviation=1.98, zone=3, count="0 - 2", same_hand=0), type = "resp")
+
+#Camilo Doval Sinker to Casey Scmidt
+#https://baseballsavant.mlb.com/sporty-videos?playId=280e8c39-720f-3ac6-a27e-63ea3e72580b
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=98.4, pfx_x=-0.63, pfx_z=-0.03, spin_deviation=49.7, zone=14, count="0 - 2", same_hand=1), type = "resp")
+
+#Kenley Jansen Cutter to Nick Castellanos
+#https://baseballsavant.mlb.com/sporty-videos?playId=7a631d87-7cf8-375e-a759-cfed8ae8f452
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=93.4, pfx_x=0.67, pfx_z=1.57, spin_deviation=16.23, zone=14, count="1 - 2", same_hand=1), type = "resp")
+
+#Bad pitches:
+#Worst Pitch: Jake Bird Sinker to 
+#https://baseballsavant.mlb.com/sporty-videos?playId=e67a2d6c-9379-3fd3-9474-e593b6d75be2
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=93.4, pfx_x=-1.63, pfx_z=0.56, spin_deviation=9.03, zone=4, count="2 - 0", same_hand=1), type = "resp")
+
+#Michael Lorenzen Cutter to Liam hicks
+#https://baseballsavant.mlb.com/sporty-videos?playId=8d1b2992-6d05-3e12-a042-4c9b8941115a
+#Finds predicted whiff rate
+predict(fastballmodel, newdata = data.frame(effective_speed=88.1, pfx_x=0.11, pfx_z=0.97, spin_deviation=33.5, zone=4, count="2 - 1", same_hand=0), type = "resp")
+```
+
+```{r}
+library(Hmisc)
+#Finds C-index (Adapted From Class Slideshow)
+phat <- predict(fastballmodel, type = "resp")
+rcorr.cens(S = fastball$is_whiff, x = phat)[["C Index"]]
+```
