@@ -16,7 +16,14 @@ The predictive model was built using a binomial logistic regression on an isolat
 * **Blueprint to Whiffs:** Pitches located in the upper shadow zones significantly increase whiff probabilities, while deploying fastballs in deeper counts (e.g., 2-2, 3-2) statistically decreases swing-and-miss rates.
 
 ## Repository Structure:
-
+```text
+├── savant_data.csv                      # Raw Statcast data 
+├── Missing_Bats_Data_Cleaning.qmd       # Filters dataset for swung-at fastballs, standardizes spatial zones, and adds Seam Shifted Wake (SSW)
+├── Missing_Bats_Codebook.pdf            # Data dictionary defining all variables and units
+├── Missing_Bats_Logistic_Regression.qmd # Generates exploratory plots, fits the binomial model, applies polynomials, and calculates C-Index
+├── Missing_Bats_Logistic_Regression.pdf # The complete 11-page research paper
+└── README.md
+```
 ## Authors
 * **Jack Sadowski** - *Data Processing & Statistical Modeling* - [GitHub](https://github.com/jsadowskivassar)
 * **Nick Kreatsoulas** - *Co-Author / Research Partner* - [LinkedIn](https://www.linkedin.com/in/nicholas-kreatsoulas-a8845a354/?isSelfProfile=false)
