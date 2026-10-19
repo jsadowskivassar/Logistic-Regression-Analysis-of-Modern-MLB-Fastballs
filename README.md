@@ -17,3 +17,6 @@ The predictive model was built using a binomial logistic regression on an isolat
 
 ## Repository Structure:
 
+## Authors
+* **Jack Sadowski** - *Data Processing & Statistical Modeling* - [GitHub](https://github.com/jsadowskivassar)
+* **Nick Kreatsoulas** - *Co-Author / Research Partner* - [LinkedIn](https://www.linkedin.com/in/nicholas-kreatsoulas-a8845a354/?isSelfProfile=false)
